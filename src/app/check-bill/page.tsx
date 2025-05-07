@@ -39,26 +39,15 @@ function BillTabs({ onSubmit }: { onSubmit: (data: any) => void }) {
         logger: m => console.log(m),
       });
   
-      console.log("📝 FINAL OCR TEXT ↴\n", text);
       setOcrText(text);
-  
-      // 🔥 Call your API route here
-      const res = await fetch("/api/analyze-bill", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ billText: text }),
-      });
-  
-      const { savings } = await res.json();
-      console.log("💰 Estimated Savings:", savings); // show in console for now
+      onSubmit({ ocrText: text });
     } catch (err) {
       setFileError("OCR failed. Please try again.");
     } finally {
       setOcrLoading(false);
     }
   };
+  
   
   
 
@@ -117,9 +106,8 @@ function BillTabs({ onSubmit }: { onSubmit: (data: any) => void }) {
               </div>
               <CardFooter>
               <Button type="submit" className="w-full" disabled={ocrLoading}>
-  Next
+                Next
 </Button>
-
               </CardFooter>
             </form>
           </CardContent>
@@ -180,36 +168,48 @@ function BillTabs({ onSubmit }: { onSubmit: (data: any) => void }) {
 }
 
 // Placeholder for Step 3: Show Savings
-function StepSavings({ onNext }: { onNext: () => void }) {
+function StepSavings({ onNext, savings }: { onNext: () => void; savings: number }) {
   return (
     <Card className="max-w-md mx-auto">
       <CardHeader>
         <CardTitle>Estimated Savings</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-3xl font-bold text-green-600 mb-2">You could save $25/month!</div>
-        <div className="mb-4 text-sm text-muted-foreground">(Animated count-up here)</div>
+        <div className="text-3xl font-bold text-green-600 mb-2">
+          You could save ${savings}/month!
+        </div>
         <Button onClick={onNext}>Generate My Script</Button>
       </CardContent>
     </Card>
   );
 }
 
+
 // Placeholder for Step 4: Show Negotiation Script
-function StepScript({ onNext }: { onNext: () => void }) {
+function StepScript({ onNext, script }: { onNext: () => void; script: string }) {
   return (
     <Card className="max-w-md mx-auto">
       <CardHeader>
         <CardTitle>Your Negotiation Script</CardTitle>
       </CardHeader>
       <CardContent>
-        <textarea className="w-full border rounded p-2 mb-4" rows={5} readOnly value={"Hi, I noticed my bill is higher than expected..."} />
-        <Button className="mb-4 w-full">Copy Script</Button>
-        <Button variant="outline" onClick={onNext} className="w-full">Let you handle it for me</Button>
+        <textarea
+          className="w-full border rounded p-2 mb-4"
+          rows={5}
+          readOnly
+          value={script}
+        />
+        <Button className="mb-4 w-full" onClick={() => navigator.clipboard.writeText(script)}>
+          Copy Script
+        </Button>
+        <Button variant="outline" onClick={onNext} className="w-full">
+          Let you handle it for me
+        </Button>
       </CardContent>
     </Card>
   );
 }
+
 
 // Placeholder for Step 5: Paywall/CTA
 function StepPaywall() {
@@ -228,15 +228,71 @@ function StepPaywall() {
 
 export default function CheckBillPage() {
   const [step, setStep] = React.useState(0);
-  // Store the bill data for later steps
+  const [loading, setLoading] = React.useState(false);
   const [billData, setBillData] = React.useState<any>(null);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-yellow-100 p-6">
-      {step === 0 && <BillTabs onSubmit={data => { setBillData(data); setStep(1); }} />}
-      {step === 1 && <StepSavings onNext={() => setStep(2)} />}
-      {step === 2 && <StepScript onNext={() => setStep(3)} />}
-      {step === 3 && <StepPaywall />}
+      {step === 0 && (
+        <BillTabs
+          onSubmit={async (data) => {
+            setLoading(true);
+            setStep(1);
+
+            const billText =
+              data.ocrText ||
+              `Provider: ${data.provider}, Amount: $${data.amount}, Due Date: ${data.dueDate}`;
+
+            const res = await fetch("/api/analyze-bill", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ billText }),
+            });
+
+            const { savings } = await res.json();
+
+            const scriptRes = await fetch("/api/generate-script", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                provider: data.provider || "your provider",
+                amount: data.amount || "unknown",
+                savings,
+                tenure: "1 year",
+              }),
+            });
+
+            const { script } = await scriptRes.json();
+
+            setBillData({ ...data, savings, script });
+            setLoading(false);
+            setStep(2);
+          }}
+        />
+      )}
+
+      {step === 1 && loading && (
+        <div className="text-center text-xl font-semibold text-gray-700 animate-pulse">
+          🔍 Analyzing your bill and finding savings...
+        </div>
+      )}
+
+      {step === 2 && billData?.savings && (
+        <StepSavings
+          savings={billData.savings}
+          onNext={() => setStep(3)}
+        />
+      )}
+
+      {step === 3 && billData?.script && (
+        <StepScript
+          script={billData.script}
+          onNext={() => setStep(4)}
+        />
+      )}
+
+      {step === 4 && <StepPaywall />}
     </div>
-  );<div className="min-h-screen flex flex-col items-center justify-center bg-muted p-6"></div>
+  );
 }
+
